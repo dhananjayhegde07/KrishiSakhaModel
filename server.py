@@ -46,8 +46,18 @@ ModelDict={
     "apple":load_model('./servermodel/crop_disease_model_apple_vgg16.keras'),
     'pepper':load_model("./servermodel/best_model_pepper_vgg16.keras"),
     'corn':load_model("./servermodel/crop_disease_model_corn_vgg16.keras"),
-    'tomato':load_model("./servermodel/best_model_tomato_vgg16.keras"),
-    'wheat':load_model("./servermodel/crop_disease_model_wheat_vgg16_ivattu.keras")
+    'tomato':load_model("./servermodel/best_vit_model_tomato_sunday.keras",
+                        custom_objects={
+                                            'gelu': gelu,
+                                            'PatchExtractor': PatchExtractor,
+                                            'PatchEmbedding': PatchEmbedding,
+                                            'PositionalEmbedding': PositionalEmbedding,
+                                            'TransformerEncoder': TransformerEncoder,
+                                            'GlobalAveragePoolingLayer': GlobalAveragePoolingLayer,
+                                            'focal_loss_fixed': focal_loss(gamma=2., alpha=0.25)
+                                        }),
+    'wheat':load_model("./servermodel/crop_disease_model_wheat_vgg16_ivattu.keras"),
+    "potato":load_model("./servermodel/crop_disease_model_potato_vgg16_sunday.keras")
 }
 
 json_class={}
