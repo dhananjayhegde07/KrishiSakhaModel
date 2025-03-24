@@ -1,5 +1,6 @@
-# app.py
+
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from sympy import im
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array, load_img
 from pydantic import BaseModel
@@ -20,9 +21,15 @@ from tensorflow.keras.saving import register_keras_serializable
 from tensorflow.keras.layers import GlobalAveragePooling1D 
 from tensorflow.keras.layers import Embedding
 
+from ultralytics import YOLO
+
 from servermodel.classes import *
 import requests
+from svm_server import *
  # or GlobalAveragePooling2D
+
+
+pest_model = YOLO("./servermodel/best.pt") 
 
 # Load the pre-trained TensorFlow model
 loaded_model = tf.keras.models.load_model(
@@ -37,6 +44,9 @@ loaded_model = tf.keras.models.load_model(
         'focal_loss_fixed': focal_loss(gamma=2., alpha=0.25)
     }
 )
+
+
+model_svm, scaler, label_map =load_model_and_scaler('./servermodel')
 
 recommend=joblib.load("./servermodel/random_forest_model_recomendation.pkl")
 fertilizer=joblib.load("./servermodel/random_forest_model_ferlilizer.pkl")
@@ -85,6 +95,9 @@ class FertilizerReommendation(BaseModel):
     p: float  
     k: float
 
+
+    
+
 # Preprocess function to prepare the image for prediction
 def preprocess_image_cnn(image_data: bytes):
     image = Image.open(io.BytesIO(image_data))
@@ -118,6 +131,7 @@ async def predict(
     image: UploadFile = File(...),  # Required image file
     c_type: str = Form(None)  # Optional string description
 ):
+    print(c_type)
     try:
         print(c_type)
         result = {"max": None, "confidence":None, "id":""}
@@ -133,12 +147,15 @@ async def predict(
             predictions = ModelDict[c_type].predict(preprocess_image_cnn(image_data=image_data))
         else:
             # Get predictions from the Vision Transformer model
-            predictions = loaded_model.predict(preprocess_image_vit(image_data=image_data))
+            # predictions = loaded_model.predict(preprocess_image_vit(image_data=image_data))
+            inter , prob = test_model(image_data,model_svm,scaler,label_map)
+            print(inter)
+            predictions = ModelDict[inter].predict(preprocess_image_cnn(image_data=image_data))
 
         # Get the class with the maximum probability
         result['max'] = np.argmax(predictions, axis=-1).item()  # Get the index of the highest probability
         result['confidence'] = np.array(predictions).flatten().tolist()[result['max']] * 100
-        result['id'] = json_class[c_type if c_type else "all"][result['max']]
+        result['id'] = json_class[c_type if c_type else inter][result['max']]
       
         print(result)
         return result
@@ -184,6 +201,61 @@ async def crop(req :FertilizerReommendation):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
 
+
+insects = ["Adristyrannus","Aleurocanthus spinifer","Cicadella viridis","grub","Leaf beetle","Miridae","Termite","Trialeurodes"]
+
+pesticides_dict = {
+    0: ["Acephate", "Malathion", "Permethrin"],
+    1: ["Imidacloprid", "Acetamiprid", "Chlorpyrifos"],
+    2: ["Imidacloprid", "Thiacloprid", "Dinotefuran", "Thiamethoxam"],
+    3: ["Chlorpyrifos", "Imidacloprid", "Thiamethoxam"],
+    4: ["Chlorpyrifos", "Imidacloprid", "Acephate"],
+    5: ["Buprofezin", "Clothianidin", "Imidacloprid"],
+    6: ["Chlorpyrifos", "Imidacloprid", "Fipronil"],
+    7: ["Neonicotinoids", "Pyrethroids", "Imidacloprid"]
+}
+
+CONFIDENCE_THRESHOLD = 0.5  # Set based on model performance
+
+@app.post("/pest")
+async def pest(image: UploadFile = File(...)):
+    try:
+        byts = await image.read()
+        img = Image.open(io.BytesIO(byts)).convert("RGB")
+        
+        # Run YOLO classification
+        results = pest_model.predict(img)
+        
+        # Get top prediction index & confidence score
+        index = results[0].probs.top1
+        confidence = results[0].probs.data[index].item()  # Get confidence score
+        
+        # If confidence is too low, return "Unknown"
+        if confidence < CONFIDENCE_THRESHOLD:
+            return {
+                "insect": "none",
+                "pest": "No treatment suggested",
+                "confidence": confidence
+            }
+        
+      
+        if index >= len(insects):
+            raise ValueError(f"Invalid class index {index} returned by model")
+        
+        # Return valid classification result
+        return {
+            "insect": insects[index],
+            "pest": pesticides_dict.get(index, ["Unknown Treatment"]),
+            "confidence": confidence
+        }
+
+    except ValueError as ve:
+        print("ve")
+        raise HTTPException(status_code=400, detail=f"Invalid prediction: {str(ve)}")
+
+    except Exception as e:
+        print("er")
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
 
 
